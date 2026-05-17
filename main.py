@@ -15,8 +15,9 @@ MODEL_PATH = os.getenv("MODEL_PATH", "/models/Qwen2.5-VL-3B-Instruct")
 # ===== LOAD MODEL ONCE =====
 model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
     MODEL_PATH,
-    torch_dtype="auto",
-    device_map="auto"
+    torch_dtype=torch.bfloat16,
+    attn_implementation="flash_attention_2",
+    device_map="auto",
 )
 
 processor = AutoProcessor.from_pretrained(MODEL_PATH)
