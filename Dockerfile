@@ -1,45 +1,39 @@
-# NVIDIA CUDA base image
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+# llama.cpp server (CUDA) + FastAPI proxy
+FROM ghcr.io/ggml-org/llama.cpp:server-cuda
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install Python and system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
-    python3-dev \
-    git \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
-    libxrender-dev \
+    libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Make python command available
-RUN ln -s /usr/bin/python3 /usr/bin/python
+WORKDIR /service
 
-WORKDIR /app
-
-# Copy requirements first (better caching)
 COPY requirements.txt .
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
-# Install PyTorch with CUDA 12.1
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir \
-    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-
-# Install remaining dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.3/flash_attn-2.7.3+cu12torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
 COPY main.py .
-# ✅ Copy system prompts explicitly
 COPY system_prompts ./system_prompts
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-# Expose port
-EXPOSE 8000
+ENV LD_LIBRARY_PATH=/app \
+    LLAMA_API_BASE=http://127.0.0.1:8080/v1 \
+    LLAMA_API_KEY=not-needed \
+    MODEL_NAME=local-model \
+    MODEL_FILE=/models/Qwen2.5-VL-3B-Instruct-GGUF/Qwen2.5-VL-3B-Instruct-Q8_0.gguf \
+    MMPROJ_FILE=/models/Qwen2.5-VL-3B-Instruct-GGUF/mmproj-model-f16.gguf \
+    LLAMA_HOST=0.0.0.0 \
+    LLAMA_PORT=8080 \
+    CTX_SIZE=16384 \
+    N_THREADS=4 \
+    N_GPU_LAYERS=-1
 
-# Model path (bind mount)
-ENV MODEL_PATH=/models/Qwen2.5-VL-3B-Instruct
+EXPOSE 8080 8000
 
-# Start FastAPI automatically
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/bin/bash", "/entrypoint.sh"]

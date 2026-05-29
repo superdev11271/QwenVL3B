@@ -1,128 +1,128 @@
 import os
+import base64
+import io
+
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from PIL import Image
-import io
-import torch
-
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
-from qwen_vl_utils import process_vision_info
+from openai import OpenAI
 
 app = FastAPI()
 
-# ===== CONFIG =====
-MODEL_PATH = os.getenv("MODEL_PATH", "/models/Qwen2.5-VL-3B-Instruct")
+LLAMA_API_BASE = os.getenv("LLAMA_API_BASE", "http://localhost:8080/v1")
+LLAMA_API_KEY = os.getenv("LLAMA_API_KEY", "not-needed")
+MODEL_NAME = os.getenv("MODEL_NAME", "local-model")
 
-# ===== LOAD MODEL ONCE =====
-model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-    MODEL_PATH,
-    torch_dtype=torch.bfloat16,
-    attn_implementation="flash_attention_2",
-    device_map="auto",
-)
+client = OpenAI(base_url=LLAMA_API_BASE, api_key=LLAMA_API_KEY)
 
-processor = AutoProcessor.from_pretrained(MODEL_PATH)
 
-# ===== LOAD SYSTEM PROMPTS =====
-def load_prompt(path):
+def load_prompt(path: str) -> str:
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
-system_ocr_en = load_prompt("system_prompts/ocr_eng_system_prompt.txt")
-system_ocr_zh = load_prompt("system_prompts/ocr_ch_system_prompt.txt")
-system_txt_en = load_prompt("system_prompts/txt_eng_system_prompt.txt")
-system_txt_zh = load_prompt("system_prompts/txt_ch_system_prompt.txt")
+
+PROMPTS = {
+    "ocr": {
+        "en": load_prompt("system_prompts/ocr_eng_system_prompt.txt"),
+        "zh": load_prompt("system_prompts/ocr_ch_system_prompt.txt"),
+    },
+    "txt": {
+        "en": load_prompt("system_prompts/txt_eng_system_prompt.txt"),
+        "zh": load_prompt("system_prompts/txt_ch_system_prompt.txt"),
+    },
+    "emotion": load_prompt("system_prompts/emotion_system_prompt.txt"),
+}
 
 
-# ===== CORE MODEL FUNCTION =====
-def run_model(messages):
-    text = processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-
-    image_inputs, video_inputs = process_vision_info(messages)
-
-    inputs = processor(
-        text=[text],
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        return_tensors="pt",
-    )
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    inputs = inputs.to(device)
-
-    generated_ids = model.generate(**inputs, max_new_tokens=512)
-
-    generated_ids_trimmed = [
-        out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-    ]
-
-    output_text = processor.batch_decode(
-        generated_ids_trimmed,
-        skip_special_tokens=True,
-        clean_up_tokenization_spaces=False
-    )
-
-    return output_text[0]
+def get_prompt(task: str, lang: str) -> str:
+    prompt = PROMPTS[task].get(lang)
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Invalid language")
+    return prompt
 
 
-# ===== OCR ENDPOINT =====
+def image_to_base64(image: Image.Image) -> str:
+    buffered = io.BytesIO()
+    image.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+
+def run_model(messages: list) -> str:
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages,
+            temperature=0.7,
+            max_tokens=512,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        raise RuntimeError(f"LLM API error: {e}") from e
+
+
+def detect_emotion(text: str) -> str:
+    return run_model([
+        {"role": "system", "content": PROMPTS["emotion"]},
+        {"role": "user", "content": [{"type": "text", "text": text}]},
+    ])
+
+
+def format_response(result: str, skip_emotion: bool) -> dict:
+    return {
+        "result": result,
+        "emotion": None if skip_emotion else detect_emotion(result),
+    }
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 @app.post("/ocr")
 async def ocr(
     file: UploadFile = File(...),
-    lang: str = Form("en")
+    lang: str = Form("en"),
+    skip_emotion: bool = Form(True),
 ):
     try:
         contents = await file.read()
         image = Image.open(io.BytesIO(contents)).convert("RGB")
+        image_base64 = image_to_base64(image)
 
         messages = [
-            {
-                "role": "system",
-                "content": [
-                    {"type": "text", "text": system_ocr_en if lang == "en" else system_ocr_zh}
-                ],
-            },
+            {"role": "system", "content": get_prompt("ocr", lang)},
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "image": image}
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+                    },
                 ],
-            }
+            },
         ]
+        return format_response(run_model(messages), skip_emotion)
 
-        result = run_model(messages)
-        return {"result": result}
-
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-# ===== TEXT FIX ENDPOINT =====
 @app.post("/fix")
 async def fix(
     text: str = Form(...),
-    lang: str = Form("en")
+    lang: str = Form("en"),
+    skip_emotion: bool = Form(True),
 ):
     try:
         messages = [
-            {
-                "role": "system",
-                "content": [
-                    {"type": "text", "text": system_txt_en if lang == "en" else system_txt_zh}
-                ],
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": text}
-                ],
-            }
+            {"role": "system", "content": get_prompt("txt", lang)},
+            {"role": "user", "content": text},
         ]
+        return format_response(run_model(messages), skip_emotion)
 
-        result = run_model(messages)
-        return {"result": result}
-
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
