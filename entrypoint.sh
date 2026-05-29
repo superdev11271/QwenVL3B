@@ -27,8 +27,10 @@ trap cleanup EXIT
     --no-jinja &
 LLAMA_PID=$!
 
+READY=0
 for _ in $(seq 1 120); do
     if curl -sf "http://127.0.0.1:${LLAMA_PORT}/health" > /dev/null; then
+        READY=1
         break
     fi
     if ! kill -0 "$LLAMA_PID" 2>/dev/null; then
@@ -36,10 +38,12 @@ for _ in $(seq 1 120); do
         exit 1
     fi
     sleep 1
-else
+done
+
+if [ "$READY" -ne 1 ]; then
     echo "llama-server failed to become ready" >&2
     exit 1
-done
+fi
 
 cd /service
 exec uvicorn main:app --host 0.0.0.0 --port 8000
