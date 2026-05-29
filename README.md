@@ -23,12 +23,12 @@ Client → FastAPI (:8000) → llama-server OpenAI API (:8080) → Qwen2.5-VL GG
 ## Quick Start (Docker)
 
 ```bash
-docker build -t qwen-api .
+docker build -t qwen-vl-3b .
 
 docker run --gpus all \
   -v /path/to/models:/models \
   -p 8000:8000 \
-  qwen-api
+  qwen-vl-3b
 ```
 
 Check health:
