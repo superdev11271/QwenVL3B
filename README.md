@@ -24,11 +24,39 @@ Client → FastAPI (:8000) → llama-server OpenAI API (:8080) → Qwen2.5-VL GG
 
 ```bash
 docker build -t qwen-vl-3b .
+```
 
+### Foreground
+
+```bash
 docker run --gpus all \
   -v /path/to/models:/models \
   -p 8000:8000 \
   qwen-vl-3b
+```
+
+### Background
+
+Run detached with a container name so you can manage it easily:
+
+```bash
+docker run -d --gpus all \
+  --name qwen-vl-3b \
+  -v /path/to/models:/models \
+  -p 8000:8000 \
+  --restart unless-stopped \
+  qwen-vl-3b
+```
+
+Useful commands:
+
+```bash
+# View logs
+docker logs -f qwen-vl-3b
+
+# Stop and remove
+docker stop qwen-vl-3b
+docker rm qwen-vl-3b
 ```
 
 Check health:

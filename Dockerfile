@@ -22,7 +22,8 @@ COPY system_prompts ./system_prompts
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-ENV LLAMA_API_BASE=http://127.0.0.1:8080/v1 \
+ENV LD_LIBRARY_PATH=/app \
+    LLAMA_API_BASE=http://127.0.0.1:8080/v1 \
     LLAMA_API_KEY=not-needed \
     MODEL_NAME=local-model \
     MODEL_FILE=/models/Qwen2.5-VL-3B-Instruct-GGUF/Qwen2.5-VL-3B-Instruct-Q8_0.gguf \

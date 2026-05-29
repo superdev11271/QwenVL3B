@@ -16,7 +16,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-/app/llama-server \
+export LD_LIBRARY_PATH="/app${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+cd /app
+
+./llama-server \
     --model "$MODEL_FILE" \
     --mmproj "$MMPROJ_FILE" \
     --host "$LLAMA_HOST" \
